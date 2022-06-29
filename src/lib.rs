@@ -1,58 +1,55 @@
-/*
- *  The RC5 Encryption algorithm implementation
- *
- */
+//
+// The RC5 Encryption algorithm implementation
+//
 use std::convert::{Into, TryInto};
 use std::num::Wrapping;
 
 pub type Word = u32;
 
 const BYTES_IN_WORD: usize = (Word::BITS / u8::BITS) as usize;
+/// Algorithm by design has fixed-size input and output
+const IO_SIZE_IN_BYTES: usize = 2 * BYTES_IN_WORD;
+/// Magic constants per specification
 const MAGIC_P: Word = 0xB7E15163;
 const MAGIC_Q: Word = 0x9E3779B9;
 
-/*
- *  RC5 struct provides functionality to encode/decode data back and forth.
- *  Input plain text and output cipher both must be 2-word size.
- *  RC5 instance can be reused to encode/decode multiple times for the same key.
- *
- *  In order to properly setup the RC5 following parameters should be provided:
- *    - key: up to 256 bytes. Empty key is not valid, but the key with all 0's is acceptable
- *    - rounds_number: value 0 to 255. Nominal choice is 12.
- *
- *  Note: currently the algorithm supports only 32-bit words.
- *
- *  Nominal setup to use is RC5-32/12/16
- *
- */
+///
+///  RC5 struct provides functionality to encode/decode data back and forth.
+///  Input plain text and output cipher both must be 2-word size.
+///  RC5 instance can be reused to encode/decode multiple times for the same key.
+///
+///  In order to properly setup the RC5 following parameters should be provided:
+///  * 'key' - up to 256 bytes. Empty key is not valid, but the key with all 0's is acceptable
+///  * 'rounds_number' - value 0 to 255. Nominal choice is 12.
+///
+///  Note: currently the algorithm supports only 32-bit words.
+///
+///  Nominal setup to use is RC5-32/12/16
+///
 pub struct RC5 {
     key_table: Vec<Word>,
     rounds_number: u8,
 }
 
 impl RC5 {
-    /*
-     *  Creates RC5 instance for a given key and rounds number.
-     *
-     */
-    pub fn new(key: Vec<u8>, rounds_number: u8) -> Self {
-        let secret_key = SecretKey::new(key);
+    ///  Creates RC5 instance for a given key and rounds number.
+    pub fn new(key: Vec<u8>, rounds_number: u8) -> Result<Self, &'static str> {
+        let secret_key = SecretKey::new(key)?;
         let expanded_key_table = key_expansion(&secret_key, rounds_number);
-        RC5 {
+        Ok(Self {
             key_table: expanded_key_table,
             rounds_number: rounds_number,
-        }
+        })
     }
 
-    /*
-     * This function should return a cipher text for a given plaintext.
-     * Can be called multiple times.
-     *
-     */
-    pub fn encode(&self, plaintext: [u8; BYTES_IN_WORD * 2]) -> [u8; BYTES_IN_WORD * 2] {
+    ///
+    /// This function should return a cipher text for a given plaintext.
+    /// Can be called multiple times.
+    ///
+    pub fn encode(&self, plaintext: [u8; IO_SIZE_IN_BYTES]) -> [u8; IO_SIZE_IN_BYTES] {
+        // conversion from bytes should never fail, just unwrap
         let mut a = Word::from_le_bytes(plaintext[..BYTES_IN_WORD].try_into().unwrap())
             .wrapping_add(self.key_table[0]);
-
         let mut b = Word::from_le_bytes(plaintext[BYTES_IN_WORD..].try_into().unwrap())
             .wrapping_add(self.key_table[1]);
 
@@ -63,18 +60,18 @@ impl RC5 {
                 .wrapping_add(self.key_table[2 * i + 1]);
         }
 
-        let mut ciphertext = [0u8; BYTES_IN_WORD * 2];
+        let mut ciphertext = [0u8; IO_SIZE_IN_BYTES];
         ciphertext[..BYTES_IN_WORD].copy_from_slice(&Word::to_le_bytes(a));
         ciphertext[BYTES_IN_WORD..].copy_from_slice(&Word::to_le_bytes(b));
         ciphertext
     }
 
-    /*
-     * This function should return a plaintext for a given ciphertext.
-     * Can be called multiple times.
-     *
-     */
-    pub fn decode(&self, ciphertext: [u8; BYTES_IN_WORD * 2]) -> [u8; BYTES_IN_WORD * 2] {
+    ///
+    /// This function should return a plaintext for a given ciphertext.
+    /// Can be called multiple times.
+    ///
+    pub fn decode(&self, ciphertext: [u8; IO_SIZE_IN_BYTES]) -> [u8; IO_SIZE_IN_BYTES] {
+        // conversion from bytes should never fail, just unwrap
         let mut a = Word::from_le_bytes(ciphertext[..BYTES_IN_WORD].try_into().unwrap());
         let mut b = Word::from_le_bytes(ciphertext[BYTES_IN_WORD..].try_into().unwrap());
 
@@ -83,7 +80,7 @@ impl RC5 {
             a = a.wrapping_sub(self.key_table[2 * i]).rotate_right(b) ^ b;
         }
 
-        let mut plaintext = [0u8; BYTES_IN_WORD * 2];
+        let mut plaintext = [0u8; IO_SIZE_IN_BYTES];
         plaintext[..BYTES_IN_WORD]
             .copy_from_slice(&Word::to_le_bytes(a.wrapping_sub(self.key_table[0])));
         plaintext[BYTES_IN_WORD..]
@@ -92,35 +89,36 @@ impl RC5 {
     }
 }
 
-// Internal representation of a Secret key.
-// For now it is only useful for validating key properties.
+/// Internal representation of a Secret key.
+/// For now it is only useful for validating key properties.
 struct SecretKey {
     key: Vec<u8>,
 }
 
 impl SecretKey {
-    pub fn new(bytes: Vec<u8>) -> Self {
-        assert!(!bytes.is_empty(), "Key should not be empty");
-        assert!(
-            bytes.len() <= 256,
-            "Key is limited in size to 256 per specification"
-        );
-        SecretKey { key: bytes }
+    pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
+        if bytes.is_empty() {
+            return Err("Key should not be empty");
+        }
+        if bytes.len() > 256 {
+            return Err("Key is limited in size to 256 per specification");
+        }
+        Ok(SecretKey { key: bytes })
     }
 }
 
-// Key expansion subroutine that for the given secret tree returns expanded key table necessary for further
-// encryption/decryption.
-fn key_expansion(key: &SecretKey, rounds_number: u8) -> Vec<Word> {
+/// Key expansion subroutine that for the given secret tree returns expanded key table necessary for further
+/// encryption/decryption.
+fn key_expansion(secret_key: &SecretKey, rounds_number: u8) -> Vec<Word> {
     let mut expanded_key_table: Vec<Word> = vec![0; 2 * (rounds_number as usize + 1)];
 
     // 1. Convert key bytes to words
-    let key_len = key.key.len();
+    let key_len = secret_key.key.len();
     let mut key_words: Vec<Word> = vec![0; key_len / BYTES_IN_WORD];
     for (i, w) in key_words.iter_mut().enumerate() {
         let byte_index = i * BYTES_IN_WORD;
         *w = Word::from_le_bytes(
-            key.key[byte_index..byte_index + BYTES_IN_WORD]
+            secret_key.key[byte_index..byte_index + BYTES_IN_WORD]
                 .try_into()
                 .unwrap(),
         )
@@ -162,7 +160,7 @@ mod tests {
         let pt = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77];
         let ct = [0x2D, 0xDC, 0x14, 0x9B, 0xCF, 0x08, 0x8B, 0x9E];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let res = rc5.encode(pt);
         assert!(ct == res);
     }
@@ -176,7 +174,7 @@ mod tests {
         let pt = [0xEA, 0x02, 0x47, 0x14, 0xAD, 0x5C, 0x4D, 0x84];
         let ct = [0x11, 0xE4, 0x3B, 0x86, 0xD2, 0x31, 0xEA, 0x64];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let res = rc5.encode(pt);
         assert!(ct == res);
     }
@@ -190,7 +188,7 @@ mod tests {
         let pt = [0x96, 0x95, 0x0D, 0xDA, 0x65, 0x4A, 0x3D, 0x62];
         let ct = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let res = rc5.decode(ct);
         assert!(pt == res);
     }
@@ -204,7 +202,7 @@ mod tests {
         let pt = [0x63, 0x8B, 0x3A, 0x5E, 0xF7, 0x2B, 0x66, 0x3F];
         let ct = [0xEA, 0x02, 0x47, 0x14, 0xAD, 0x5C, 0x4D, 0x84];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let res = rc5.decode(ct);
         assert!(pt == res);
     }
@@ -217,7 +215,7 @@ mod tests {
         ];
         let pt = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let ct = rc5.encode(pt);
         let res = rc5.decode(ct);
         assert!(pt == res);
@@ -231,7 +229,7 @@ mod tests {
         ];
         let pt = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let ct1 = rc5.encode(pt);
         let ct2 = rc5.encode(pt);
         assert!(ct1 == ct2);
@@ -246,7 +244,7 @@ mod tests {
         let pt = [0x63, 0x8B, 0x3A, 0x5E, 0xF7, 0x2B, 0x66, 0x3F];
         let ct = [0xEA, 0x02, 0x47, 0x14, 0xAD, 0x5C, 0x4D, 0x84];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let res1 = rc5.decode(ct);
         let res2 = rc5.decode(ct);
         assert!(pt == res1);
@@ -260,7 +258,7 @@ mod tests {
         let pt = [0; 8];
         let ct = [0x21, 0xA5, 0xDB, 0xEE, 0x15, 0x4B, 0x8F, 0x6D];
 
-        let rc5 = RC5::new(key, 12);
+        let rc5 = RC5::new(key, 12).unwrap();
         let res = rc5.encode(pt);
         assert!(ct == res);
     }
@@ -269,7 +267,7 @@ mod tests {
     #[should_panic]
     fn encode_with_empty_key() {
         let key = Vec::new();
-        let _rc5 = RC5::new(key, 12);
+        let _rc5 = RC5::new(key, 12).unwrap();
     }
 
     #[test]
@@ -281,7 +279,7 @@ mod tests {
         let pt = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77];
         let ct = [0x22, 0x0A, 0xB5, 0x63, 0x40, 0xDA, 0x89, 0x14];
 
-        let rc5 = RC5::new(key, 0);
+        let rc5 = RC5::new(key, 0).unwrap();
         let res = rc5.encode(pt);
         assert!(ct == res);
     }
@@ -290,6 +288,6 @@ mod tests {
     #[should_panic]
     fn encode_with_too_big_key() {
         let key = vec![0; 257];
-        RC5::new(key, 12);
+        RC5::new(key, 12).unwrap();
     }
 }
