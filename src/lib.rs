@@ -177,7 +177,7 @@ where
 {
     if input.len() % BLOCK_SIZE > 0 {
         return Err(Error::InvalidInput(
-            "RC5 can only work with even bytes sequence".to_string(),
+            "RC5 can only work with even block-size bytes sequence".to_string(),
         ));
     }
 
@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Key should not be empty")]
     fn encode_with_empty_key() {
         let key = Vec::new();
         let _rc5 = RC5::new(key, 12).unwrap();
@@ -382,14 +382,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Key is limited in size to 256 per specification")]
     fn encode_with_too_big_key() {
         let key = vec![0; 257];
         RC5::new(key, 12).unwrap();
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn encode_uneven_data() {
         let key = vec![0; 16];
 
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn decode_uneven_data() {
         let key = vec![0; 16];
 
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn encode_3words() {
         let key = vec![0; 16];
 
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn decode_3words() {
         let key = vec![0; 16];
 
