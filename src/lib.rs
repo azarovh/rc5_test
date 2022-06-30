@@ -15,6 +15,14 @@ const BLOCK_SIZE: usize = 2 * BYTES_IN_WORD;
 const MAGIC_P: Word = 0xB7E15163;
 const MAGIC_Q: Word = 0x9E3779B9;
 
+#[derive(Debug)]
+pub enum Error {
+    EmptyKey(String),
+    KeyIsTooBig(String),
+    InvalidInput(String),
+    BytesToWordsFail,
+}
+
 ///
 ///  RC5 struct provides functionality to encode/decode data back and forth.
 ///  RC5 instance can be reused to encode/decode multiple times for the same key.
@@ -28,8 +36,6 @@ const MAGIC_Q: Word = 0x9E3779B9;
 ///
 ///  Nominal setup to use is RC5-32/12/16
 ///
-/// TODO: implement generic version with different Word types support
-/// TODO: handle cases with inputs not qual modulo bytes in word or modulo block size (Err at the moment)
 pub struct RC5 {
     key_table: Vec<Word>,
     rounds_number: u8,
@@ -39,7 +45,7 @@ impl RC5 {
     ///
     ///  Creates RC5 instance for a given key and rounds number.
     ///
-    pub fn new(key: Vec<u8>, rounds_number: u8) -> Result<Self, &'static str> {
+    pub fn new(key: Vec<u8>, rounds_number: u8) -> Result<Self, Error> {
         let secret_key = SecretKey::new(key)?;
         let expanded_key_table = key_expansion(&secret_key, rounds_number);
         Ok(Self {
@@ -52,20 +58,20 @@ impl RC5 {
     /// This function returns a cipher text for a given plaintext.
     /// Can be called multiple times.
     ///
-    pub fn encode(&self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        self.process(plaintext, |b| self.encode_block(b))
+    pub fn encode(&self, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
+        for_each_block(plaintext, |b| self.encode_block(b))
     }
 
     ///
     /// This function returns a plaintext for a given ciphertext.
     /// Can be called multiple times.
     ///
-    pub fn decode(&self, ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
-        self.process(ciphertext, |b| self.decode_block(b))
+    pub fn decode(&self, ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
+        for_each_block(ciphertext, |b| self.decode_block(b))
     }
 
     /// Encode a single block of data
-    fn encode_block(&self, block: &[u8]) -> Result<[u8; BLOCK_SIZE], &'static str> {
+    fn encode_block(&self, block: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
         let (mut a, mut b) = block_from_bytes(block)?;
         a = a.wrapping_add(self.key_table[0]);
         b = b.wrapping_add(self.key_table[1]);
@@ -83,7 +89,7 @@ impl RC5 {
     }
 
     /// Decode a single block of data
-    fn decode_block(&self, block: &[u8]) -> Result<[u8; BLOCK_SIZE], &'static str> {
+    fn decode_block(&self, block: &[u8]) -> Result<[u8; BLOCK_SIZE], Error> {
         let (mut a, mut b) = block_from_bytes(block)?;
 
         for i in (1..=self.rounds_number.into()).rev() {
@@ -101,26 +107,6 @@ impl RC5 {
         );
         Ok(plaintext)
     }
-
-    /// Helper subroutine to iterate over byte sequence
-    /// and apply functor to each block (which effectively encodes/decodes it)
-    fn process<F>(&self, input: &[u8], mut f: F) -> Result<Vec<u8>, &'static str>
-    where
-        F: FnMut(&[u8]) -> Result<[u8; BLOCK_SIZE], &'static str>,
-    {
-        if input.len() % BLOCK_SIZE > 0 {
-            return Err("RC5 can only work with even bytes sequence");
-        }
-
-        let mut output = Vec::with_capacity(input.len());
-        input.chunks(BLOCK_SIZE).try_for_each(|block| {
-            let processed = f(block)?;
-            output.extend_from_slice(&processed);
-            Ok(())
-        })?;
-
-        Ok(output)
-    }
 }
 
 /// Internal representation of a Secret key.
@@ -130,12 +116,14 @@ struct SecretKey {
 }
 
 impl SecretKey {
-    pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, Error> {
         if bytes.is_empty() {
-            return Err("Key should not be empty");
+            return Err(Error::EmptyKey("Key should not be empty".to_string()));
         }
         if bytes.len() > 256 {
-            return Err("Key is limited in size to 256 per specification");
+            return Err(Error::KeyIsTooBig(
+                "Key is limited in size to 256 per specification".to_string(),
+            ));
         }
         Ok(SecretKey { key: bytes })
     }
@@ -181,8 +169,30 @@ fn key_expansion(secret_key: &SecretKey, rounds_number: u8) -> Vec<Word> {
     expanded_key_table
 }
 
+/// Helper subroutine to iterate over byte sequence
+/// and apply functor to each block (which effectively encodes/decodes it)
+fn for_each_block<F>(input: &[u8], mut f: F) -> Result<Vec<u8>, Error>
+where
+    F: FnMut(&[u8]) -> Result<[u8; BLOCK_SIZE], Error>,
+{
+    if input.len() % BLOCK_SIZE > 0 {
+        return Err(Error::InvalidInput(
+            "RC5 can only work with even bytes sequence".to_string(),
+        ));
+    }
+
+    let mut output = Vec::with_capacity(input.len());
+    input.chunks(BLOCK_SIZE).try_for_each(|block| {
+        let processed = f(block)?;
+        output.extend_from_slice(&processed);
+        Ok(())
+    })?;
+
+    Ok(output)
+}
+
 /// Utility function to convert sequence of bytes to a block (i.e. 2 Words)
-fn block_from_bytes(bytes: &[u8]) -> Result<(Word, Word), &'static str> {
+fn block_from_bytes(bytes: &[u8]) -> Result<(Word, Word), Error> {
     if let Ok(left_bytes) = bytes[..BYTES_IN_WORD].try_into() {
         if let Ok(right_bytes) = bytes[BYTES_IN_WORD..].try_into() {
             return Ok((
@@ -191,7 +201,7 @@ fn block_from_bytes(bytes: &[u8]) -> Result<(Word, Word), &'static str> {
             ));
         }
     }
-    return Err("Failed to convert bytes to words");
+    return Err(Error::BytesToWordsFail);
 }
 
 #[cfg(test)]
