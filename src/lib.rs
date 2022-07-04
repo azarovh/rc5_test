@@ -8,11 +8,11 @@ use std::{
     ops::*,
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Error {
-    EmptyKey(String),
-    KeyIsTooBig(String),
-    InvalidInput(String),
+    EmptyKey,
+    KeyIsTooBig,
+    InvalidInput,
     BytesToWordsFail,
 }
 
@@ -29,6 +29,7 @@ pub enum Error {
 ///
 ///  Nominal setup to use is RC5-32/12/16
 ///
+#[derive(Debug)]
 pub struct RC5<W> {
     key_table: Vec<W>,
     rounds_number: u8,
@@ -109,10 +110,7 @@ where
 
 /// Word describes the required set of operations for word types in order to work with RC5.
 /// Currently this trait is implemented for 3 types: u16/u32/u64
-pub trait Word: Zero + Copy + WrappingAdd + WrappingSub + PrimInt + From<u8>
-where
-    <<Self as Word>::Bytes as TryFrom<Vec<u8>>>::Error: Debug,
-{
+pub trait Word: Zero + Copy + WrappingAdd + WrappingSub + PrimInt + From<u8> {
     const BITS: u8;
     const BYTES_IN_WORD: usize = (Self::BITS / u8::BITS as u8) as usize;
 
@@ -194,12 +192,10 @@ struct SecretKey {
 impl SecretKey {
     pub fn new(bytes: Vec<u8>) -> Result<Self, Error> {
         if bytes.is_empty() {
-            return Err(Error::EmptyKey("Key should not be empty".to_string()));
+            return Err(Error::EmptyKey);
         }
         if bytes.len() > 256 {
-            return Err(Error::KeyIsTooBig(
-                "Key is limited in size to 256 per specification".to_string(),
-            ));
+            return Err(Error::KeyIsTooBig);
         }
         Ok(SecretKey { key: bytes })
     }
@@ -258,17 +254,14 @@ where
 
 /// Helper subroutine to iterate over byte sequence
 /// and apply functor to each block (which effectively encodes/decodes it)
-fn for_each_block<F, W>(input: &[u8], mut f: F) -> Result<Vec<u8>, Error>
+fn for_each_block<F, W>(input: &[u8], f: F) -> Result<Vec<u8>, Error>
 where
     W: Word,
-    <<W as Word>::Bytes as TryFrom<Vec<u8>>>::Error: Debug,
-    F: FnMut(&[u8]) -> Result<(W, W), Error>,
+    F: Fn(&[u8]) -> Result<(W, W), Error>,
 {
     // TODO: remove this constraint
     if input.len() % W::BLOCK_SIZE > 0 {
-        return Err(Error::InvalidInput(
-            "RC5 can only work with even block-size bytes sequence".to_string(),
-        ));
+        return Err(Error::InvalidInput);
     }
 
     let mut output = Vec::with_capacity(input.len());
@@ -283,10 +276,7 @@ where
 }
 
 /// Utility function to convert sequence of bytes to a block (i.e. 2 Words)
-fn block_from_bytes<W: Word>(bytes: &[u8]) -> Result<(W, W), Error>
-where
-    <<W as Word>::Bytes as TryFrom<Vec<u8>>>::Error: Debug,
-{
+fn block_from_bytes<W: Word>(bytes: &[u8]) -> Result<(W, W), Error> {
     if let Ok(left_bytes) = bytes[..W::BYTES_IN_WORD].to_owned().try_into() {
         if let Ok(right_bytes) = bytes[W::BYTES_IN_WORD..].to_owned().try_into() {
             return Ok((
@@ -517,10 +507,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Key should not be empty")]
     fn encode_with_empty_key() {
         let key = Vec::new();
-        let _rc5 = RC5::<u32>::new(key, 12).unwrap();
+        assert_eq!(RC5::<u32>::new(key, 12).unwrap_err(), Error::EmptyKey);
     }
 
     #[test]
@@ -538,49 +527,44 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Key is limited in size to 256 per specification")]
     fn encode_with_too_big_key() {
         let key = vec![0; 257];
-        RC5::<u32>::new(key, 12).unwrap();
+        assert_eq!(RC5::<u32>::new(key, 12).unwrap_err(), Error::KeyIsTooBig);
     }
 
     #[test]
-    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn encode_uneven_data() {
         let key = vec![0; 16];
         let pt = vec![0; 7]; // 7 bytes
 
         let rc5 = RC5::<u32>::new(key, 12).unwrap();
-        let _res = rc5.encode(&pt).unwrap();
+        assert_eq!(rc5.encode(&pt).unwrap_err(), Error::InvalidInput);
     }
 
     #[test]
-    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn decode_uneven_data() {
         let key = vec![0; 16];
         let ct = vec![0; 7]; // 7 bytes
 
         let rc5 = RC5::<u32>::new(key, 12).unwrap();
-        let _res = rc5.decode(&ct).unwrap();
+        assert_eq!(rc5.decode(&ct).unwrap_err(), Error::InvalidInput);
     }
 
     #[test]
-    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn encode_3words() {
         let key = vec![0; 16];
         let pt = vec![0; 12]; // 3 words
 
         let rc5 = RC5::<u32>::new(key, 12).unwrap();
-        let _res = rc5.encode(&pt).unwrap();
+        assert_eq!(rc5.encode(&pt).unwrap_err(), Error::InvalidInput);
     }
 
     #[test]
-    #[should_panic(expected = "RC5 can only work with even block-size bytes sequence")]
     fn decode_3words() {
         let key = vec![0; 16];
         let ct = vec![0; 12]; // 3 words
 
         let rc5 = RC5::<u32>::new(key, 12).unwrap();
-        let _res = rc5.decode(&ct).unwrap();
+        assert_eq!(rc5.decode(&ct).unwrap_err(), Error::InvalidInput);
     }
 }
