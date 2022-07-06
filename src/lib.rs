@@ -5,8 +5,8 @@ use num_traits::{identities::Zero, int::PrimInt, WrappingAdd, WrappingSub};
 use std::{
     convert::{Into, TryFrom, TryInto},
     fmt::Debug,
-    ops::*,
 };
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -185,6 +185,7 @@ impl Word for u64 {
 
 /// Internal representation of a Secret key.
 /// For now it is only useful for validating key properties.
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct SecretKey {
     key: Vec<u8>,
 }

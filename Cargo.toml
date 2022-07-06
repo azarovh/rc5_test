@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 num-traits = "0.2.15"
+zeroize = { version = "1.5.3", features = ["derive"] }
